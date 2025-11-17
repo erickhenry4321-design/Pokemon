@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pokémon Duel Arena (PWA)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="manifest" href="/manifest.json">
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Inter:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        /* Estilos globais e fontes */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #1a202c; /* Cor de fundo escura */
+            color: #e2e8f0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            padding: 1rem;
+        }
+        .arena-container {
+            max-width: 500px;
+            width: 100%;
+            margin: 0 auto;
+        }
+        .pk-font {
+            font-family: 'Press Start 2P', cursive;
+        }
+
+        /* Estilos específicos do jogo */
+        .health-bar-bg {
+            background-color: #3f3f46;
+            border: 2px solid #a0aec0;
+        }
+        .health-bar-fill {
+            transition: width 0.5s ease-in-out;
+        }
+        .pk-card {
+            background-color: #2d3748;
+            border: 4px solid #4a5568;
+            box-shadow: 0 10px 15px rgba(0, 0, 0, 0.5);
+            transition: transform 0.1s;
+        }
+        .pk-card:active {
+            transform: scale(0.98);
+        }
+        .pk-card-glow {
+            box-shadow: 0 0 15px rgba(255, 255, 0, 0.7);
+        }
+        .attack-button {
+            transition: background-color 0.1s, transform 0.1s;
+        }
+        .attack-button:active {
+            transform: translateY(2px);
+        }
+    </style>
+</head>
+<body class="p-4">
+
+    <!-- Modal de Login/Registro (Substituindo o Firebase UI) -->
+    <div id="auth-modal" class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
+        <div class="pk-card p-6 w-11/12 max-w-md rounded-xl">
+            <h2 class="pk-font text-xl text-center mb-6 text-yellow-400">Arena de Duelos</h2>
+            <p class="text-sm text-center mb-4 text-gray-400">Entre para salvar seu progresso e jogar online.</p>
+
+            <label class="block mb-2 text-sm font-bold">Usuário Anônimo (Local)</label>
+            <input type="text" id="anonymous-username" placeholder="Seu nome de Treinador" class="w-full p-2 mb-4 rounded bg-gray-700 border border-gray-600 text-white focus:ring-yellow-500 focus:border-yellow-500">
+            <button id="start-anonymous-button" class="w-full p-3 bg-indigo-600 hover:bg-indigo-700 rounded-lg text-white font-bold transition duration-150 shadow-md">
+                Jogar Offline (Anônimo)
+            </button>
+
+            <div class="text-center mt-6 text-sm text-gray-400">
+                <p>O modo Anônimo não salva seu progresso online.</p>
+                <p>ID do App (para o Firestore): <span id="display-app-id" class="text-xs text-yellow-400"></span></p>
+                <p>Seu ID: <span id="display-user-id" class="text-xs text-yellow-400">...</span></p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Container Principal do Jogo -->
+    <div id="game-container" class="arena-container hidden">
+        <h1 class="pk-font text-2xl text-center mb-6 text-red-500 shadow-md">PKMN Duel Arena</h1>
+
+        <!-- Seção do Jogador 1 (Local) -->
+        <div id="player-area" class="pk-card p-4 rounded-xl mb-6">
+            <div class="flex justify-between items-center mb-2">
+                <p class="font-bold text-yellow-400" id="player-name">Você</p>
+                <p class="font-bold text-lg" id="player-hp-text"></p>
+            </div>
+            <div class="health-bar-bg rounded-full h-4">
+                <div id="player-hp-bar" class="health-bar-fill h-4 rounded-full bg-green-500" style="width: 100%;"></div>
+            </div>
+            <div class="text-center mt-3">
+                <img id="player-pokemon-image" src="https://placehold.co/100x100/38a169/ffffff?text=PKMN" alt="Seu Pokémon" class="mx-auto my-2 rounded-full border-4 border-yellow-500">
+                <p id="player-pokemon-name" class="font-bold text-lg text-green-400">Bulbasaur</p>
+            </div>
+        </div>
+
+        <!-- Mensagens de Batalha -->
+        <div id="message-area" class="pk-card p-3 rounded-lg text-center text-sm mb-6 h-16 flex items-center justify-center">
+            <p id="battle-message" class="text-white pk-font text-xs">Aguardando o oponente...</p>
+        </div>
+
+        <!-- Seção do Oponente (Remoto) -->
+        <div id="opponent-area" class="pk-card p-4 rounded-xl mb-6 opacity-50">
+            <div class="flex justify-between items-center mb-2">
+                <p class="font-bold text-red-400" id="opponent-name">Oponente (Aguardando...)</p>
+                <p class="font-bold text-lg" id="opponent-hp-text"></p>
+            </div>
+            <div class="health-bar-bg rounded-full h-4">
+                <div id="opponent-hp-bar" class="health-bar-fill h-4 rounded-full bg-red-500" style="width: 100%;"></div>
+            </div>
+            <div class="text-center mt-3">
+                <img id="opponent-pokemon-image" src="https://placehold.co/100x100/e53e3e/ffffff?text=????" alt="Pokémon Oponente" class="mx-auto my-2 rounded-full border-4 border-red-500">
+                <p id="opponent-pokemon-name" class="font-bold text-lg text-red-400">???</p>
+            </div>
+        </div>
+
+        <!-- Botões de Ataque -->
+        <div id="attack-buttons" class="grid grid-cols-2 gap-3 mt-4">
+            <!-- Os botões serão gerados aqui pelo JS -->
+        </div>
+
+        <!-- Botão de Sair/Resetar -->
+        <div class="mt-6 text-center">
+            <button id="exit-button" class="pk-card attack-button bg-gray-600 hover:bg-gray-700 text-white font-bold py-3 px-6 rounded-lg w-full">
+                Sair/Resetar
+            </button>
+        </div>
+
+        <!-- Painel de Conexão -->
+        <div class="mt-6 p-4 border border-gray-600 rounded-lg text-center bg-gray-800">
+            <p class="text-sm font-bold mb-2">Conexão</p>
+            <p id="connection-status" class="text-xs text-yellow-500">...</p>
+        </div>
+    </div>
+
+    <!-- Scripts do Firebase e do Jogo -->
+    <script type="module">
+        // Importa as bibliotecas do Firebase
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, setDoc, onSnapshot, collection, query, updateDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Variáveis Globais do Canvas (Fornecidas pelo ambiente)
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-pokemon-app-id';
+        let firebaseConfig = {};
+        try {
+            firebaseConfig = JSON.parse(__firebase_config);
+        } catch (e) {
+            console.error("Erro ao analisar __firebase_config:", e);
+        }
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        // Inicialização do Firebase
+        let app, db, auth;
+        let userId = null;
+        let isAuthReady = false;
+
+        // Referências do DOM
+        const authModal = document.getElementById('auth-modal');
+        const gameContainer = document.getElementById('game-container');
+        const startAnonymousButton = document.getElementById('start-anonymous-button');
+        const anonymousUsernameInput = document.getElementById('anonymous-username');
+        const attackButtonsContainer = document.getElementById('attack-buttons');
+        const battleMessageElement = document.getElementById('battle-message');
+        const exitButton = document.getElementById('exit-button');
+        const connectionStatus = document.getElementById('connection-status');
+
+        // Estado do Jogo (Global)
+        let localPlayerState = null;
+        let opponentPlayerState = null;
+        let currentRoomId = null;
+        let currentRoomRef = null;
+        let localPokemon = null;
+        let opponentPokemon = null;
+        let isMyTurn = false;
+        let username = null;
+
+        // Dados estáticos dos Pokémon
+        const POKEMON_DATA = [
+            { id: 1, name: "Bulbasaur", hp: 100, attack: 15, defense: 10, img: "https://placehold.co/100x100/38a169/ffffff?text=Bulb", attacks: ["Chicote de Vinha", "Folha Navalha"] },
+            { id: 4, name: "Charmander", hp: 100, attack: 18, defense: 8, img: "https://placehold.co/100x100/e53e3e/ffffff?text=Char", attacks: ["Brasa", "Lança-chamas"] },
+            { id: 7, name: "Squirtle", hp: 100, attack: 16, defense: 9, img: "https://placehold.co/100x100/4299e1/ffffff?text=Squi", attacks: ["Jato de Água", "Canhão de Água"] }
+        ];
+
+        // --- Funções de Ajuda ---
+
+        const getPublicRoomCollectionPath = (collectionName) => {
+            return `/artifacts/${appId}/public/data/${collectionName}`;
+        };
+
+        const updateHealthBar = (barElementId, hpTextElementId, currentHp, maxHp) => {
+            const bar = document.getElementById(barElementId);
+            const text = document.getElementById(hpTextElementId);
+            const percentage = Math.max(0, (currentHp / maxHp) * 100);
+
+            bar.style.width = `${percentage}%`;
+            text.textContent = `${currentHp}/${maxHp} HP`;
+
+            if (percentage < 25) {
+                bar.classList.remove('bg-green-500', 'bg-yellow-500');
+                bar.classList.add('bg-red-500');
+            } else if (percentage < 50) {
+                bar.classList.remove('bg-green-500', 'bg-red-500');
+                bar.classList.add('bg-yellow-500');
+            } else {
+                bar.classList.remove('bg-yellow-500', 'bg-red-500');
+                bar.classList.add('bg-green-500');
+            }
+        };
+
+        const displayMessage = (message, isImportant = false) => {
+            battleMessageElement.textContent = message;
+            battleMessageElement.classList.toggle('pk-card-glow', isImportant);
+        };
+
+        const createAttackButtons = (pokemon) => {
+            attackButtonsContainer.innerHTML = '';
+            pokemon.attacks.forEach(attackName => {
+                const button = document.createElement('button');
+                button.textContent = attackName;
+                button.classList.add('attack-button', 'bg-red-600', 'hover:bg-red-700', 'text-white', 'font-bold', 'py-3', 'px-6', 'rounded-lg', 'shadow-lg');
+                button.onclick = () => {
+                    if (isMyTurn && !localPlayerState.isFinished) {
+                        performAttack(attackName);
+                    } else if (localPlayerState.isFinished) {
+                         displayMessage("A batalha acabou! Clique em Sair/Resetar.", true);
+                    } else {
+                        displayMessage("Não é a sua vez!", true);
+                    }
+                };
+                attackButtonsContainer.appendChild(button);
+            });
+        };
+
+        const toggleAttackButtons = (enable) => {
+            const buttons = attackButtonsContainer.querySelectorAll('button');
+            buttons.forEach(button => {
+                button.disabled = !enable;
+                button.classList.toggle('opacity-50', !enable);
+                button.classList.toggle('hover:bg-red-700', enable);
+            });
+        };
+
+        const selectRandomPokemon = () => {
+            return POKEMON_DATA[Math.floor(Math.random() * POKEMON_DATA.length)];
+        };
+
+        // --- Lógica do Jogo ---
+
+        const initializeLocalPlayer = () => {
+            localPokemon = selectRandomPokemon();
+            username = anonymousUsernameInput.value || `Treinador Anônimo (${userId.substring(0, 4)})`;
+
+            localPlayerState = {
+                id: userId,
+                name: username,
+                pokemonName: localPokemon.name,
+                pokemonImg: localPokemon.img,
+                maxHp: localPokemon.hp,
+                currentHp: localPokemon.hp,
+                isReady: true,
+                isTurn: false,
+                lastAttack: null,
+                isFinished: false
+            };
+
+            document.getElementById('player-name').textContent = username;
+            document.getElementById('player-pokemon-name').textContent = localPokemon.name;
+            document.getElementById('player-pokemon-image').src = localPokemon.img;
+            updateHealthBar('player-hp-bar', 'player-hp-text', localPokemon.hp, localPokemon.hp);
+            createAttackButtons(localPokemon);
+
+            authModal.classList.add('hidden');
+            gameContainer.classList.remove('hidden');
+            connectionStatus.textContent = "Conectado. Tentando encontrar um oponente...";
+        };
+
+        const setupNewRoom = async () => {
+            const newRoomRef = doc(db, getPublicRoomCollectionPath('rooms'), userId);
+            const roomData = {
+                player1: localPlayerState,
+                player2: null,
+                status: 'waiting', // waiting, active, finished
+                turn: userId, // Começa com quem criou a sala (P1)
+                lastUpdated: Date.now()
+            };
+            await setDoc(newRoomRef, roomData);
+            currentRoomId = userId;
+            currentRoomRef = newRoomRef;
+            listenToRoom(currentRoomId);
+            displayMessage("Sala de espera criada. Compartilhe o seu ID com um amigo.", false);
+        };
+
+        const joinExistingRoom = async (roomId) => {
+            const roomRef = doc(db, getPublicRoomCollectionPath('rooms'), roomId);
+            const roomSnap = await getDoc(roomRef);
+
+            if (roomSnap.exists() && roomSnap.data().status === 'waiting') {
+                const roomData = roomSnap.data();
+
+                // Garante que P1 e P2 não são a mesma pessoa
+                if (roomData.player1.id === userId) {
+                    displayMessage("Você já está nesta sala!", true);
+                    return;
+                }
+
+                const updatedRoomData = {
+                    ...roomData,
+                    player2: localPlayerState,
+                    status: 'active',
+                    lastUpdated: Date.now()
+                };
+                await updateDoc(roomRef, updatedRoomData);
+                currentRoomId = roomId;
+                currentRoomRef = roomRef;
+                listenToRoom(currentRoomId);
+                displayMessage("Sala encontrada! A batalha está prestes a começar.", true);
+                return true;
+            }
+            return false;
+        };
+
+        const findOrCreateRoom = async () => {
+            // Tenta encontrar uma sala 'waiting' (em espera)
+            const roomsCollection = collection(db, getPublicRoomCollectionPath('rooms'));
+            // Usamos getDocs e ordenamos localmente, pois orderBy exige índice
+            const snapshot = await getDocs(roomsCollection);
+            let waitingRoom = null;
+
+            snapshot.forEach(doc => {
+                const data = doc.data();
+                if (data.status === 'waiting' && data.player1.id !== userId) {
+                    waitingRoom = { id: doc.id, data: data };
+                }
+            });
+
+            if (waitingRoom) {
+                if (await joinExistingRoom(waitingRoom.id)) {
+                    return;
+                }
+            }
+            // Se não encontrou ou não conseguiu entrar, cria uma nova sala
+            await setupNewRoom();
+        };
+
+        const listenToRoom = (roomId) => {
+            const roomRef = doc(db, getPublicRoomCollectionPath('rooms'), roomId);
+            onSnapshot(roomRef, (docSnap) => {
+                if (docSnap.exists()) {
+                    const room = docSnap.data();
+                    updateGameState(room);
+                } else {
+                    displayMessage("A sala foi removida. Tente novamente.", true);
+                    resetGame();
+                }
+            });
+        };
+
+        const updateGameState = (room) => {
+            let localIsPlayer1 = room.player1?.id === userId;
+            let opponentData = localIsPlayer1 ? room.player2 : room.player1;
+            let localData = localIsPlayer1 ? room.player1 : room.player2;
+
+            if (room.status === 'finished') {
+                const winnerId = room.turn; // O último a jogar é o vencedor
+                displayMessage(winnerId === userId ? "VOCÊ VENCEU A BATALHA!" : "VOCÊ PERDEU!", true);
+                toggleAttackButtons(false);
+                localPlayerState.isFinished = true;
+                return;
+            }
+
+            // Atualiza o estado do jogador local com base no que o Firestore diz
+            localPlayerState.currentHp = localData ? localData.currentHp : localPlayerState.currentHp;
+            localPlayerState.isFinished = localData ? localData.isFinished : false;
+
+            // Define de quem é a vez
+            isMyTurn = room.turn === userId;
+
+            // Atualiza o estado do oponente na UI
+            if (opponentData) {
+                opponentPlayerState = opponentData;
+                const opPkmn = POKEMON_DATA.find(p => p.name === opponentPlayerState.pokemonName);
+                if (opPkmn) opponentPokemon = opPkmn; // Define o Pokémon do oponente
+                document.getElementById('opponent-area').classList.remove('opacity-50');
+                document.getElementById('opponent-name').textContent = opponentPlayerState.name;
+                document.getElementById('opponent-pokemon-name').textContent = opponentPlayerState.pokemonName;
+                document.getElementById('opponent-pokemon-image').src = opponentPlayerState.pokemonImg;
+                updateHealthBar('opponent-hp-bar', 'opponent-hp-text', opponentPlayerState.currentHp, opponentPlayerState.maxHp);
+                connectionStatus.textContent = "Batalha Ativa!";
+            } else {
+                opponentPlayerState = null;
+                document.getElementById('opponent-area').classList.add('opacity-50');
+                document.getElementById('opponent-name').textContent = "Oponente (Aguardando...)";
+                document.getElementById('opponent-pokemon-name').textContent = "???";
+                document.getElementById('opponent-pokemon-image').src = "https://placehold.co/100x100/e53e3e/ffffff?text=????";
+                document.getElementById('opponent-hp-bar').style.width = '100%';
+                document.getElementById('opponent-hp-text').textContent = '100/100 HP';
+                connectionStatus.textContent = "Aguardando oponente...";
+            }
+
+            // Atualiza a vida local e a mensagem de turno
+            updateHealthBar('player-hp-bar', 'player-hp-text', localPlayerState.currentHp, localPlayerState.maxHp);
+
+            if (room.status === 'active') {
+                if (isMyTurn) {
+                    displayMessage("É a sua vez! Escolha um ataque.", true);
+                    toggleAttackButtons(true);
+                } else {
+                    displayMessage(`Vez do Oponente (${opponentPlayerState ? opponentPlayerState.name : '...'}). Aguarde!`, false);
+                    toggleAttackButtons(false);
+                }
+
+                // Processa o último ataque do oponente
+                const lastAttackData = localIsPlayer1 ? room.player2.lastAttack : room.player1.lastAttack;
+                if (lastAttackData && lastAttackData !== localPlayerState.lastProcessedAttack) {
+                    processOpponentAttack(lastAttackData, opponentPlayerState.pokemonName);
+                    localPlayerState.lastProcessedAttack = lastAttackData;
+                }
+            }
+        };
+
+        const calculateDamage = (attacker, defender, attackName) => {
+            // Lógica de dano simplificada: Dano = (Ataque do Pokémon) + (um pouco de aleatoriedade)
+            const baseDamage = attacker.attack * 1.5;
+            const randomFactor = Math.floor(Math.random() * 5) + 1; // 1 a 5 de dano extra
+            const totalDamage = Math.max(1, Math.round(baseDamage + randomFactor)); // Garante pelo menos 1 de dano
+            return totalDamage;
+        };
+
+        const performAttack = async (attackName) => {
+            if (!currentRoomRef || !opponentPlayerState) return;
+
+            const damage = calculateDamage(localPokemon, opponentPokemon, attackName);
+            let newOpponentHp = Math.max(0, opponentPlayerState.currentHp - damage);
+
+            // 1. Prepara a atualização
+            const isFinished = newOpponentHp <= 0;
+            const winnerId = isFinished ? userId : null;
+            const loserId = isFinished ? opponentPlayerState.id : null;
+
+            const roomSnap = await getDoc(currentRoomRef);
+            if (!roomSnap.exists()) return;
+            const room = roomSnap.data();
+
+            let localIsPlayer1 = room.player1.id === userId;
+            let updatedRoomData = {
+                ...room,
+                turn: opponentPlayerState.id, // Passa a vez para o oponente
+                lastUpdated: Date.now()
+            };
+
+            // Atualiza o HP do oponente (P2 ou P1, dependendo de quem você é)
+            if (localIsPlayer1) {
+                updatedRoomData.player2 = {
+                    ...room.player2,
+                    currentHp: newOpponentHp,
+                    lastAttack: { attackerName: localPokemon.name, attackName, damage },
+                    isFinished: isFinished
+                };
+            } else {
+                updatedRoomData.player1 = {
+                    ...room.player1,
+                    currentHp: newOpponentHp,
+                    lastAttack: { attackerName: localPokemon.name, attackName, damage },
+                    isFinished: isFinished
+                };
+            }
+
+            // Se o jogo terminou
+            if (isFinished) {
+                updatedRoomData.status = 'finished';
+                updatedRoomData.turn = winnerId; // Define o vencedor
+            }
+
+            // 2. Envia para o Firestore
+            await updateDoc(currentRoomRef, updatedRoomData);
+
+            // Atualiza o estado local (para evitar que o jogador clique novamente)
+            localPlayerState.lastAttack = { attackerName: localPokemon.name, attackName, damage };
+            isMyTurn = false;
+            toggleAttackButtons(false);
+
+            displayMessage(`Você usou ${attackName}! Causa ${damage} de dano!`, true);
+        };
+
+        const processOpponentAttack = (attackData, opponentName) => {
+            // Nota: O HP local já deve ter sido atualizado pelo Firestore.
+            displayMessage(`${opponentName} usou ${attackData.attackName}! Causa ${attackData.damage} de dano!`, true);
+        };
+
+        // --- Gerenciamento da Sessão ---
+
+        const resetGame = async () => {
+             if (currentRoomId) {
+                const roomRef = doc(db, getPublicRoomCollectionPath('rooms'), currentRoomId);
+                // Se eu criei a sala (player1), deleto. Se eu entrei (player2), saio e deixo P1 waiting.
+                try {
+                    const roomSnap = await getDoc(roomRef);
+                    if (roomSnap.exists()) {
+                        const room = roomSnap.data();
+                        if (room.player1.id === userId) {
+                             await deleteDoc(roomRef); // P1 deleta
+                        } else if (room.player2.id === userId) {
+                            // P2 sai, P1 volta para waiting
+                            await updateDoc(roomRef, {
+                                player2: null,
+                                status: 'waiting',
+                                lastUpdated: Date.now()
+                            });
+                        }
+                    }
+                } catch (e) {
+                    console.error("Erro ao resetar/deletar sala:", e);
+                }
+            }
+
+            // Limpa o estado local
+            currentRoomId = null;
+            currentRoomRef = null;
+            localPlayerState = null;
+            opponentPlayerState = null;
+            isMyTurn = false;
+            username = null;
+            localPokemon = null;
+            opponentPokemon = null;
+
+            gameContainer.classList.add('hidden');
+            authModal.classList.remove('hidden');
+            anonymousUsernameInput.value = '';
+            document.getElementById('display-user-id').textContent = '...';
+        };
+
+        // --- Inicialização e Eventos ---
+
+        startAnonymousButton.addEventListener('click', () => {
+            if (!isAuthReady || !userId) {
+                displayMessage("Aguardando inicialização da autenticação...", true);
+                return;
+            }
+            if (anonymousUsernameInput.value.trim() === "") {
+                displayMessage("Por favor, insira um nome de treinador.", true);
+                return;
+            }
+            initializeLocalPlayer();
+            findOrCreateRoom();
+        });
+
+        exitButton.addEventListener('click', resetGame);
+
+        // Função de inicialização do PWA
+        window.addEventListener('load', async () => {
+            // 1. Configurações e Inicialização do Firebase
+            if (Object.keys(firebaseConfig).length > 0) {
+                app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+                document.getElementById('display-app-id').textContent = appId;
+
+                // 2. Autenticação
+                onAuthStateChanged(auth, async (user) => {
+                    if (user) {
+                        userId = user.uid;
+                        document.getElementById('display-user-id').textContent = userId;
+                        isAuthReady = true;
+
+                        // Se o usuário já está autenticado e tem uma sessão, tenta reconectar.
+                        if (localPlayerState) {
+                           // Tenta reconectar ou buscar sala
+                           await findOrCreateRoom();
+                        }
+
+                    } else {
+                        // Faz login anônimo se não estiver logado
+                        if (initialAuthToken) {
+                            await signInWithCustomToken(auth, initialAuthToken);
+                        } else {
+                            await signInAnonymously(auth);
+                        }
+                    }
+                });
+
+            } else {
+                // Caso não tenha FirebaseConfig (modo de desenvolvimento/erro)
+                document.getElementById('display-app-id').textContent = "CONFIG ERROR";
+                document.getElementById('display-user-id').textContent = "ERROR: Sem Auth";
+            }
+
+            // 3. Service Worker para PWA (Opcional, mas para instalação)
+            if ('serviceWorker' in navigator) {
+                try {
+                    await navigator.serviceWorker.register('/sw.js');
+                    console.log('Service Worker registrado com sucesso');
+                } catch (e) {
+                    console.error('Falha ao registrar Service Worker:', e);
+                }
+            }
+        });
+
+        // O Service Worker deve ser um arquivo separado, mas para o requisito de 1 arquivo, colocamos aqui a lógica
+        // Nota: O arquivo 'manifest.json' também precisa existir para a instalação PWA
+        // Neste ambiente de arquivo único, dependemos do ambiente Canvas para lidar com o PWA
+        // mas incluímos a tag <link rel="manifest" ...> no <head>.
+        // O código do Service Worker não pode ser colocado aqui em HTML puro.
+        // Assumimos que o ambiente Canvas cuida do 'sw.js' e 'manifest.json' para o PWA funcionar.
+
+    </script>
+    
+    <!-- Estruturas mínimas para manifest e sw para validação PWA -->
+    <script id="pwa-workaround">
+        // Se este código for executado em um ambiente de arquivo único, ele simula a existência do manifest
+        // para ajudar o navegador a detectar o PWA.
+        if (!document.querySelector('link[rel="manifest"]')) {
+            const link = document.createElement('link');
+            link.rel = 'manifest';
+            link.href = 'data:application/json;base64,' + btoa(JSON.stringify({
+                "name": "Pokemon Duel",
+                "short_name": "PKMN Duel",
+                "start_url": ".",
+                "display": "standalone",
+                "background_color": "#1a202c",
+                "theme_color": "#e53e3e",
+                "icons": [{
+                    "src": "https://placehold.co/192x192/e53e3e/ffffff?text=PWA",
+                    "sizes": "192x192",
+                    "type": "image/png"
+                }, {
+                    "src": "https://placehold.co/512x512/e53e3e/ffffff?text=PWA",
+                    "sizes": "512x512",
+                    "type": "image/png"
+                }]
+            }));
+            document.head.appendChild(link);
+        }
+
+        // Adiciona um listener para a instalação do PWA (Android/Chrome)
+        let deferredPrompt;
+        window.addEventListener('beforeinstallprompt', (e) => {
+            e.preventDefault();
+            deferredPrompt = e;
+            console.log("Evento beforeinstallprompt disparado.");
+            // Aqui você pode mostrar um botão de "Instalar App" personalizado.
+        });
+    </script>
+</body>
+</html>
+
