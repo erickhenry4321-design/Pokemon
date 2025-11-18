@@ -1,1 +1,309 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pokemon Duel Arena (PDX)</title>
+    <!-- Carregar Tailwind CSS para estilos -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Carregar Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, setDoc, onSnapshot, collection, query, orderBy, limit, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Variáveis globais fornecidas pelo ambiente (Canvas)
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        let app, db, auth;
+        let isAuthReady = false;
+        let currentUserId = 'offline'; // ID de usuário anônimo ou autenticado
+
+        const userStatusEl = document.getElementById('user-status');
+        const configErrorEl = document.getElementById('config-error');
+        const loginContainerEl = document.getElementById('login-container');
+        const arenaContainerEl = document.getElementById('arena-container');
+        const userIdDisplayEl = document.getElementById('user-id-display');
+        const localUsernameInput = document.getElementById('local-username');
+        const onlineUsernameInput = document.getElementById('online-username');
+        const loginButton = document.getElementById('login-button');
+        const localPlayButton = document.getElementById('local-play-button');
+
+        // Configuração do Log (Opcional, mas útil para debug)
+        // setLogLevel('debug'); 
+
+        // Função de Inicialização do Firebase e Autenticação
+        async function initializeFirebase() {
+            if (!firebaseConfig) {
+                configErrorEl.textContent = 'ERRO: CONFIGURAÇÃO DO FIREBASE AUSENTE.';
+                console.error("Firebase config not found. Cannot initialize Firestore.");
+                return;
+            }
+            
+            configErrorEl.textContent = 'OK'; // Limpa o erro de configuração
+            configErrorEl.classList.remove('text-red-500');
+            configErrorEl.classList.add('text-green-500');
+
+            try {
+                app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+
+                // 1. Tenta autenticar com o token customizado
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    // 2. Se não houver token, usa autenticação anônima
+                    await signInAnonymously(auth);
+                }
+                
+                // Listener para o estado de autenticação
+                onAuthStateChanged(auth, (user) => {
+                    if (user) {
+                        currentUserId = user.uid;
+                        isAuthReady = true;
+                        userStatusEl.textContent = 'ONLINE (Auth OK)';
+                        userStatusEl.classList.remove('text-red-500');
+                        userStatusEl.classList.add('text-green-500');
+                        userIdDisplayEl.textContent = currentUserId;
+                        
+                        // Oculta a tela de login e mostra a arena
+                        loginContainerEl.classList.add('hidden');
+                        arenaContainerEl.classList.remove('hidden');
+
+                        // Inicia o carregamento de dados do Firestore
+                        loadOnlineDuelData();
+
+                    } else {
+                        // Isso só deve acontecer se a autenticação anônima falhar ou for deslogada
+                        currentUserId = 'offline';
+                        isAuthReady = true; 
+                        userStatusEl.textContent = 'OFFLINE (Sem Auth)';
+                        userStatusEl.classList.remove('text-green-500');
+                        userStatusEl.classList.add('text-red-500');
+                        userIdDisplayEl.textContent = 'N/A';
+                        
+                        // Se falhar, permanece na tela de login
+                        loginContainerEl.classList.remove('hidden');
+                        arenaContainerEl.classList.add('hidden');
+                    }
+                });
+
+            } catch (error) {
+                console.error("Firebase Auth or Init Error:", error);
+                userStatusEl.textContent = `ERRO: ${error.code || 'Desconhecido'}`;
+            }
+        }
+
+        // --- LÓGICA DO DUELO ONLINE/FIRESTORE (Exemplo) ---
+
+        // Caminho da coleção pública (usando o appId para isolamento)
+        function getOnlineCollectionPath() {
+            return `artifacts/${appId}/public/data/duels`;
+        }
+        
+        // Exemplo: Salvar/Atualizar dados do usuário
+        async function updateOnlineUserStatus(username) {
+            if (!isAuthReady || currentUserId === 'offline') return;
+            const userRef = doc(db, `artifacts/${appId}/users/${currentUserId}/profile/data`);
+            try {
+                await setDoc(userRef, {
+                    username: username,
+                    lastSeen: new Date().toISOString(),
+                    score: 0 // Exemplo de score
+                }, { merge: true });
+                console.log("Status do usuário online atualizado.");
+            } catch (e) {
+                console.error("Erro ao atualizar status online: ", e);
+            }
+        }
+        
+        // Exemplo: Carregar dados de duelos em tempo real (onSnapshot)
+        function loadOnlineDuelData() {
+            if (!isAuthReady || currentUserId === 'offline') return;
+
+            const q = query(collection(db, getOnlineCollectionPath()), limit(10));
+            
+            // Listener em tempo real
+            onSnapshot(q, (querySnapshot) => {
+                const duels = [];
+                querySnapshot.forEach((doc) => {
+                    duels.push(doc.data());
+                });
+                
+                // Simplesmente mostra o número de duelos para confirmar que funciona
+                const onlineStatusDiv = document.getElementById('online-status-div');
+                onlineStatusDiv.textContent = `Duelos online ativos (últimos 10): ${duels.length}`;
+            }, (error) => {
+                console.error("Erro ao carregar duelos online: ", error);
+                const onlineStatusDiv = document.getElementById('online-status-div');
+                onlineStatusDiv.textContent = `ERRO ao carregar duelos: ${error.code}`;
+            });
+        }
+        
+        // --- FUNÇÕES DE INTERAÇÃO DO USUÁRIO ---
+        
+        function handleOnlineLogin() {
+            const username = onlineUsernameInput.value.trim();
+            if (username && isAuthReady && currentUserId !== 'offline') {
+                updateOnlineUserStatus(username);
+                // Já está logado e a tela deve ter mudado via onAuthStateChanged
+            } else {
+                alert('Por favor, insira um nome de usuário válido e verifique o status da autenticação.');
+            }
+        }
+
+        function handleLocalPlay() {
+            const username = localUsernameInput.value.trim() || 'Treinador Anônimo';
+            currentUserId = 'offline'; // Força modo offline
+            // Oculta login e mostra arena para jogo offline
+            loginContainerEl.classList.add('hidden');
+            arenaContainerEl.classList.remove('hidden');
+            document.getElementById('arena-message').textContent = `Bem-vindo, ${username}! (Modo Offline)`;
+        }
+        
+        // Adiciona event listeners
+        document.addEventListener('DOMContentLoaded', () => {
+            // Inicializa Firebase e Auth
+            initializeFirebase();
+            
+            // Evento para botão de Login/Jogar Online
+            loginButton.addEventListener('click', handleOnlineLogin);
+            
+            // Evento para botão de Jogar Offline
+            localPlayButton.addEventListener('click', handleLocalPlay);
+        });
+        
+    </script>
+    <style>
+        /* Estilos globais e cores */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #1a202c; /* Cor de fundo escura */
+            color: #e2e8f0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            padding: 1rem;
+        }
+
+        .arena-container {
+            max-width: 500px;
+            width: 100%;
+            margin: 0 auto;
+        }
+
+        .pk-font {
+            font-family: 'Press Start 2P', cursive;
+        }
+
+        /* Estilos específicos do jogo */
+        .health-bar-bg {
+            background-color: #3f3f46;
+            border: 2px solid #a0a4c0;
+        }
+
+        .health-bar-fill {
+            transition: width 0.5s ease-in-out;
+        }
+
+        .pk-card {
+            background-color: #2d3748;
+            border: 4px solid #4a5568;
+            box-shadow: 0 10px 15px rgba(0, 0, 0, 0.5);
+            transition: transform 0.3s;
+        }
+
+        .pk-card:hover {
+            transform: translateY(-5px);
+        }
+
+        /* Classes de utilidade Tailwind personalizadas */
+        .btn-primary {
+            @apply bg-yellow-500 text-gray-900 font-bold py-3 px-6 rounded-lg shadow-lg hover:bg-yellow-400 transition duration-300;
+        }
+
+        .btn-secondary {
+            @apply bg-indigo-600 text-white font-bold py-3 px-6 rounded-lg shadow-lg hover:bg-indigo-700 transition duration-300;
+        }
+    </style>
+    <!-- Fonte retro de Pokémon -->
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+</head>
+<body class="bg-gray-900">
+
+    <main class="arena-container p-6">
+
+        <!-- Informações de Status (visível sempre) -->
+        <div class="text-xs text-center mb-4 p-2 bg-gray-800 rounded-lg">
+            <p>ID do App: <span id="app-id-display" class="font-mono text-blue-400">Loading...</span></p>
+            <p>Status de Config: <span id="config-error" class="font-mono text-red-500">Aguardando...</span></p>
+            <p>Status de Auth: <span id="user-status" class="font-mono text-red-500">Aguardando Auth...</span></p>
+            <p>Seu ID: <span id="user-id-display" class="font-mono text-blue-400 break-all">Aguardando ID...</span></p>
+        </div>
+
+        <!-- TELA DE LOGIN -->
+        <div id="login-container" class="bg-gray-800 p-8 rounded-xl shadow-2xl transition-opacity duration-500">
+            <h1 class="text-4xl pk-font text-yellow-400 text-center mb-6">Arena de Duelos</h1>
+            
+            <div class="mb-6">
+                <label for="local-username" class="block text-sm font-medium mb-2">Usuário Anônimo (Local)</label>
+                <input type="text" id="local-username" placeholder="Seu nome local" value="Erick" class="w-full p-3 rounded-lg bg-gray-700 border-2 border-gray-600 focus:outline-none focus:border-yellow-500 text-white">
+            </div>
+
+            <button id="local-play-button" class="btn-secondary w-full mb-4">
+                Jogar Offline (Não Salva)
+            </button>
+            
+            <div class="border-t border-gray-700 pt-6 mt-6">
+                <h2 class="text-lg font-bold mb-3 text-center text-blue-400">Jogar Online (Salvar Progresso)</h2>
+                <div class="mb-4">
+                    <label for="online-username" class="block text-sm font-medium mb-2">Usuário Online</label>
+                    <input type="text" id="online-username" placeholder="Seu nome para o Ranking" class="w-full p-3 rounded-lg bg-gray-700 border-2 border-gray-600 focus:outline-none focus:border-yellow-500 text-white">
+                </div>
+                <button id="login-button" class="btn-primary w-full">
+                    Conectar e Jogar Online
+                </button>
+                <p class="text-xs text-center mt-2 text-gray-400">Requer Status de Auth: ONLINE</p>
+            </div>
+        </div>
+
+        <!-- TELA DA ARENA (ESCONDIDA ATÉ O LOGIN) -->
+        <div id="arena-container" class="hidden bg-gray-800 p-8 rounded-xl shadow-2xl">
+            <h1 class="text-3xl pk-font text-green-400 text-center mb-6">Pokédex Pronta!</h1>
+            <p id="arena-message" class="text-center text-lg mb-4">Bem-vindo(a)!</p>
+            
+            <!-- Confirmação de Status Online -->
+            <div class="p-3 bg-gray-700 rounded-lg text-sm text-center mb-6">
+                <p>Status do Serviço:</p>
+                <p id="online-status-div" class="text-blue-300 font-bold">Verificando Duelos Online...</p>
+            </div>
+
+            <!-- Exemplo de Card de Pokémon -->
+            <div class="pk-card p-4 mb-4">
+                <h2 class="text-2xl font-bold text-red-400">Charizard</h2>
+                <p class="text-sm">Fogo / Voador</p>
+                <div class="mt-2">
+                    <div class="health-bar-bg h-3 rounded-full">
+                        <div class="health-bar-fill h-full bg-red-600 rounded-full" style="width: 85%;"></div>
+                    </div>
+                </div>
+            </div>
+
+            <p class="text-center text-gray-400 text-sm mt-4">Agora você pode continuar a construir a interface do seu duelo!</p>
+
+        </div>
+
+    </main>
+    <script>
+        // Define o ID do App para exibição
+        document.getElementById('app-id-display').textContent = appId;
+    </script>
+</body>
+</html>
+
 
